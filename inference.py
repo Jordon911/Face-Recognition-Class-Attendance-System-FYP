@@ -71,7 +71,7 @@ def initialize_program_folders():
             df_program_students['Status'] = 'Absent'
             df_program_students.to_csv(csv_file_path, index=False, header=True)
 
-def recognize_attendance():
+def recognize_attendance(feed_label, stop_event):
     source = "0"  # Path to Video or webcam
     path_saved_model = 'models/model.h5'  # Path to saved .h5 model
     threshold = 0.80  # Min prediction confidence (0<conf<1)
@@ -97,15 +97,18 @@ def recognize_attendance():
     liveness_model = tf.keras.models.load_model(liveness_model_path)
     label_encoder = pickle.loads(open(label_encoder_path, "rb").read())
 
-    cap = cv2.VideoCapture(source)
+    cap = cv2.VideoCapture(0)
 
     start_time = None
     face_detected_time = None
 
     while True:
-        success, img = cap.read()
-        if not success:
-            print('[INFO] Error with Camera')
+        if stop_event.is_set():
+            cap.release()
+            break
+
+        ret, img = cap.read()
+        if not ret:
             break
 
         detections = detector.detect_faces(img)
@@ -214,10 +217,14 @@ def recognize_attendance():
             start_time = None
             face_detected_time = None
 
-        cv2.imshow('Output Image', img)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            cv2.destroyAllWindows()
-            break
+        cv_image = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        pil_image = Image.fromarray(cv_image)
+        tk_image = ImageTk.PhotoImage(image=pil_image)
+        feed_label.config(image=tk_image)
+        feed_label.image = tk_image
+
+    # cap.release()
+    cv2.destroyAllWindows()
 
     print('[INFO] Inference on Videostream is Ended...')
 

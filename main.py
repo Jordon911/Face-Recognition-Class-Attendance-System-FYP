@@ -19,10 +19,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from tkinter import Toplevel, Label, Button
+from take_imgs import takeImages
+import datetime
 
 
-recognition_active = False
 recognition_thread = None
+recognition_active = False
 
 FONT_REGULAR = ('Segoe UI', 12)
 FONT_BOLD = ('Segoe UI', 12, 'bold')
@@ -318,12 +320,12 @@ def create_main_window():
 
         threading.Thread(target=video_stream, daemon=True).start()
 
-    def set_black_screen(video_label):
-        black_image = np.zeros((480, 640, 3), dtype=np.uint8)  # Create a black image
-        black_image = Image.fromarray(black_image)
-        black_image = ImageTk.PhotoImage(image=black_image)
-        video_label.configure(image=black_image)
-        video_label.image = black_image  # Keep a reference so it's not garbage collected
+    # def set_black_screen(video_label):
+    #     black_image = np.zeros((480, 640, 3), dtype=np.uint8)  # Create a black image
+    #     black_image = Image.fromarray(black_image)
+    #     black_image = ImageTk.PhotoImage(image=black_image)
+    #     video_label.configure(image=black_image)
+    #     video_label.image = black_image  # Keep a reference so it's not garbage collected
 
     def take_imgs1(name_entry, student_id_entry, programme_entry, tutorial_group_entry, year_sem_entry, error_label, video_label):
         name = name_entry.get()
@@ -365,219 +367,441 @@ def create_main_window():
         t4 = threading.Thread(target=rfaces_call, daemon=True)
         t4.start()
 
-    def open_registration_screen():
-        root.withdraw()  # Hide the main window
-        registration_window = Toplevel(root)
-        registration_window.title("Registration")
-        registration_window.configure(bg="#B6E1E7")
 
-        # Set the dimensions for the registration window
-        main_window_width = 1100
-        main_window_height = 650
-        center_window(registration_window, main_window_width, main_window_height)
+    stop_event = threading.Event()
 
-        registration_window.resizable(False, False)  # Disables window resizing
+    def start_recognition(webcam_label):
+        global recognition_active, recognition_thread
+        if not recognition_active:
+            recognition_active = True
+            stop_event.clear()
+            recognition_thread = threading.Thread(target=inference.recognize_attendance,
+                                                  args=(webcam_label, stop_event))
+            recognition_thread.start()
 
-        # Create a main frame that will contain both the webcam feed and the information form
-        main_frame = Frame(registration_window, bg="#B6E1E7")
-        main_frame.pack(fill="both", expand=True)
-        main_frame.grid_columnconfigure(0, weight=1)
-        main_frame.grid_columnconfigure(1, weight=2)
+    def stop_recognition(webcam_label):
+        global recognition_active, recognition_thread
+        recognition_active = False
+        stop_event.set()
 
-        # Create a frame for webcam feed on the left side
-        webcam_frame = Frame(main_frame, bg="#B6E1E7")
-        webcam_frame.grid(row=0, column=0, sticky="nsew", padx=(20, 10), pady=20)
-        webcam_frame.grid_rowconfigure(0, weight=1)
-        webcam_frame.grid_columnconfigure(0, weight=1)
+        if recognition_thread is not None:
+            recognition_thread.join(timeout=5)
+            if recognition_thread.is_alive():
+                print("Warning: recognition thread did not terminate as expected.")
 
-        # Initialize the video_label with a black image
+        # Directly update the webcam label here
         black_image = np.zeros((480, 640, 3), dtype=np.uint8)
-        black_image = cv2.cvtColor(black_image, cv2.COLOR_BGR2RGB)
-        black_image = Image.fromarray(black_image)
-        black_image = ImageTk.PhotoImage(image=black_image)
-        video_label = Label(webcam_frame, image=black_image, bg="#B6E1E7")
-        video_label.image = black_image  # Anchor image to prevent garbage collection
-        video_label.grid(row=0, column=0, sticky="nsew")
+        black_image_pil = Image.fromarray(black_image)
+        black_image_tk = ImageTk.PhotoImage(image=black_image_pil)
+        webcam_label.config(image=black_image_tk)
+        webcam_label.image = black_image_tk
 
-        # Create a frame for user information on the right side
-        info_frame = Frame(main_frame, bg="#B6E1E7")
-        info_frame.grid(row=0, column=1, sticky="nsew", padx=(10, 20), pady=20)
-        info_frame.grid_columnconfigure(1, weight=1)
+        recognition_thread = None
 
-        # Create a frame for buttons below the webcam feed
-        button_frame = Frame(webcam_frame, bg="#B6E1E7")
-        button_frame.grid(row=1, column=0, sticky="ew")
-        button_frame.grid_columnconfigure(0, weight=1, uniform="btn")
-        button_frame.grid_columnconfigure(1, weight=1, uniform="btn")
-        button_frame.grid_columnconfigure(2, weight=1, uniform="btn")
+    def update_datetime(datetime_label):
+        current_datetime = datetime.datetime.now()
+        formatted_datetime = current_datetime.strftime("%A, %Y-%m-%d %H:%M:%S")
+        datetime_label.config(text=formatted_datetime)
+        datetime_label.after(1000, update_datetime, datetime_label)
 
-        # Define the style for the labels, entry widgets, and buttons
-        label_font = ('Segoe UI', 12)
-        entry_font = ('Segoe UI', 10)
-        bg_color = "#B6E1E7"
+    def open_recognition_frame():
+        recognition_frame = tk.Toplevel(root)
+        recognition_frame.title("Face Recognition")
 
-        # Define uniform padding
-        label_padx = 10
-        label_pady = 5
-        entry_padx = 10
-        entry_pady = 5
+        # Set the size of the recognition window
+        window_width = 1100
+        window_height = 580
+        screen_width = recognition_frame.winfo_screenwidth()
+        screen_height = recognition_frame.winfo_screenheight()
+        x_coordinate = int((screen_width / 2) - (window_width / 2))
+        y_coordinate = int((screen_height / 2) - (window_height / 2))
+        recognition_frame.geometry(f"{window_width}x{window_height}+{x_coordinate}+{y_coordinate}")
 
-        # Define a consistent width for the entry and combobox widgets
-        entry_width = 25
+        # Webcam Frame with Padding
+        webcam_frame = tk.Frame(recognition_frame, padx=10, pady=10)
+        webcam_frame.grid(row=0, column=0, sticky='ew')
 
-        # Create a style for the combobox to match the entry fields
-        style = ttk.Style()
-        style.theme_use('clam')  # This theme allows for more customization
-        style.configure('TCombobox', fieldbackground='white', background='white', foreground='black', width=entry_width,
-                        font=entry_font)
-        style.configure('TEntry', font=entry_font)
+        # Info Frame on the right side of the webcam
+        info_frame = tk.Frame(recognition_frame, padx=10, pady=10)
+        info_frame.grid(row=0, column=1, rowspan=2, sticky='nsew')
 
-        # Add entry widgets for user information using grid layout
-        # Create and place the widgets in the info frame
-        name_label = tk.Label(info_frame, text="Name :", font=label_font, bg=bg_color)
-        name_label.grid(row=0, column=0, padx=label_padx, pady=label_pady, sticky="e")
-        name_entry = ttk.Entry(info_frame, font=entry_font, width=entry_width)
-        name_entry.grid(row=0, column=1, padx=entry_padx, pady=entry_pady, sticky="ew")
+        # Date and Time Label with larger font
+        datetime_label = tk.Label(info_frame, text="", font=("Helvetica", 14))  # Increased font size
+        datetime_label.grid(row=0, column=0, columnspan=2, pady=(0, 20))  # Increased pady for more space
+        update_datetime(datetime_label)  # Initialize datetime update
 
-        student_id_label = tk.Label(info_frame, text="Student ID :", font=label_font, bg=bg_color)
-        student_id_label.grid(row=1, column=0, padx=label_padx, pady=label_pady, sticky="e")
-        student_id_entry = ttk.Entry(info_frame, font=entry_font, width=entry_width)
-        student_id_entry.grid(row=1, column=1, padx=entry_padx, pady=entry_pady, sticky="ew")
+        # Label and Dropdown for Subject with space in between and larger font
+        subject_label = tk.Label(info_frame, text="Subject :", font=("Helvetica", 12))  # Increased font size
+        subject_label.grid(row=1, column=0, sticky='w', pady=(10, 0))  # Added pady to create space
 
-        programme_label = tk.Label(info_frame, text="Programme :", font=label_font, bg=bg_color)
-        programme_label.grid(row=2, column=0, padx=label_padx, pady=label_pady, sticky="e")
-        programme_combobox = ttk.Combobox(info_frame, values=["RDS", "REI", "RWS", "RSD"], font=entry_font,
-                                          width=entry_width, style='TCombobox')
-        programme_combobox.grid(row=2, column=1, padx=entry_padx, pady=entry_pady, sticky="ew")
+        subject_var = tk.StringVar()
+        subject_dropdown = ttk.Combobox(info_frame, textvariable=subject_var, state="readonly",
+                                        values=["Subject 1", "Subject 2", "Subject 3"])  # Replace with actual values
+        subject_dropdown.grid(row=1, column=1, sticky='e', pady=(10, 0))  # Added pady to create space
+        subject_dropdown.config(font=("Helvetica", 12))  # Increased font size for dropdown text
 
-        tutorial_group_label = tk.Label(info_frame, text="Tutorial Group :", font=label_font, bg=bg_color)
-        tutorial_group_label.grid(row=3, column=0, padx=label_padx, pady=label_pady, sticky="e")
-        tutorial_group_combobox = ttk.Combobox(info_frame, values=[str(i) for i in range(1, 11)], font=entry_font,
-                                               width=entry_width, style='TCombobox')
-        tutorial_group_combobox.grid(row=3, column=1, padx=entry_padx, pady=entry_pady, sticky="ew")
+        # Label and Dropdown for Programme with space in between and larger font
+        programme_label = tk.Label(info_frame, text="Programme :", font=("Helvetica", 12))  # Increased font size
+        programme_label.grid(row=2, column=0, sticky='w', pady=(10, 0))  # Added pady to create space
 
-        year_and_sem_label = tk.Label(info_frame, text="Year and Semester :", font=label_font, bg=bg_color)
-        year_and_sem_label.grid(row=4, column=0, padx=label_padx, pady=label_pady, sticky="e")
-        year_sem_combobox = ttk.Combobox(info_frame,
+        programme_var = tk.StringVar()
+        programme_dropdown = ttk.Combobox(info_frame, textvariable=programme_var, state="readonly",
+                                          values=["RDS", "REI",
+                                                  "RWS", "RSD"])  # Replace with actual values
+        programme_dropdown.grid(row=2, column=1, sticky='e', pady=(10, 0))  # Added pady to create space
+        programme_dropdown.config(font=("Helvetica", 12))  # Increased font size for dropdown text
+
+        # Label and Dropdown for Year/Semester with space in between and larger font
+        year_sem_label = tk.Label(info_frame, text="Year/Semester :", font=("Helvetica", 12))  # Increased font size
+        year_sem_label.grid(row=3, column=0, sticky='w', pady=(10, 0))  # Added pady to create space
+
+        year_sem_var = tk.StringVar()
+        year_sem_dropdown = ttk.Combobox(info_frame, textvariable=year_sem_var, state="readonly",
                                          values=["Year 1 Sem 1", "Year 1 Sem 2", "Year 1 Sem 3", "Year 2 Sem 1",
                                                  "Year 2 Sem 2", "Year 2 Sem 3", "Year 3 Sem 1", "Year 3 Sem 2",
-                                                 "Year 3 Sem 3"], font=entry_font, width=entry_width, style='TCombobox')
-        year_sem_combobox.grid(row=4, column=1, padx=entry_padx, pady=entry_pady, sticky="ew")
+                                                 "Year 3 Sem 3"])  # Replace with actual values
+        year_sem_dropdown.grid(row=3, column=1, sticky='e', pady=(10, 0))  # Added pady to create space
+        year_sem_dropdown.config(font=("Helvetica", 12))  # Increased font size for dropdown text
 
-        error_label = tk.Label(info_frame, text="", fg="red", bg=bg_color)
-        error_label.grid(row=5, columnspan=2, padx=10, pady=(5, 10))
+        # Counter for Supposed to Arrive
+        counters_frame = ttk.Frame(info_frame, padding=(10, 5))
+        counters_frame.grid(row=4, column=0, columnspan=2, pady=(10, 0), sticky='nsew')
 
-        # Create a frame for the table
-        table_frame = Frame(info_frame, bg=bg_color)
-        table_frame.grid(row=6, columnspan=2, padx=10, pady=10, sticky="nsew")
+        # Supposed to Arrive Counter and Box
+        counters_frame = ttk.Frame(info_frame, padding=(10, 5))
+        counters_frame.grid(row=4, column=0, columnspan=2, pady=(10, 0), sticky='nsew')
 
-        # Define the style for the Treeview
+        # Supposed to Arrive Counter and Box
+        supposed_to_arrive_frame = ttk.LabelFrame(counters_frame, text="Supposed to Arrive", padding=(10, 5))
+        supposed_to_arrive_frame.grid(row=0, column=0, padx=(0, 10), sticky='nsew')
+
+        supposed_to_arrive_count = tk.StringVar()
+        supposed_to_arrive_count.set("0")  # Initialize with 0, you can update it later
+        supposed_to_arrive_count_label = tk.Label(supposed_to_arrive_frame, textvariable=supposed_to_arrive_count,
+                                                  font=("Helvetica", 12))
+        supposed_to_arrive_count_label.pack()
+
+        # Actual Arrivals Counter and Box
+        actual_arrivals_frame = ttk.LabelFrame(counters_frame, text="Actual Arrivals", padding=(10, 5))
+        actual_arrivals_frame.grid(row=0, column=1, sticky='nsew')
+
+        actual_arrivals_count = tk.StringVar()
+        actual_arrivals_count.set("0")  # Initialize with 0, you can update it later
+        actual_arrivals_count_label = tk.Label(actual_arrivals_frame, textvariable=actual_arrivals_count,
+                                               font=("Helvetica", 12))
+        actual_arrivals_count_label.pack()
+
+        # Set a fixed width for both frames
+        supposed_to_arrive_frame.config(width=200)
+        actual_arrivals_frame.config(width=200)
+
+        info_frame.grid_rowconfigure(5, weight=1)  # This will allocate space for the new row
+
+        # Create a new frame within info_frame for the additional scroll boxes
+        additional_boxes_frame = ttk.Frame(info_frame, padding=(10, 5))
+        additional_boxes_frame.grid(row=5, column=0, columnspan=2, sticky='ew', padx=10, pady=(5, 0))  # Reduced pady
+
+        # Haven't Arrived Scroll Box
+        havent_arrived_label_frame = ttk.LabelFrame(additional_boxes_frame, text="Haven't Arrived", padding=(10, 5))
+        havent_arrived_label_frame.grid(row=0, column=0, sticky='nsew', padx=(0, 10), pady=5)
+        havent_arrived_label_frame.grid(rowspan=5)  # Span multiple rows to match the info_frame height
+
+        havent_arrived_scroll = ttk.Scrollbar(havent_arrived_label_frame)
+        havent_arrived_scroll.pack(side='right', fill='y')
+
+        # Increase the height of the "Haven't Arrived" Listbox
+        havent_arrived_listbox = tk.Listbox(havent_arrived_label_frame, yscrollcommand=havent_arrived_scroll.set,
+                                            height=10)  # Adjust height as necessary
+        havent_arrived_listbox.pack(side='left', fill='both', expand=True)
+        havent_arrived_scroll.config(command=havent_arrived_listbox.yview)
+
+        # Late Scroll Box
+        late_label_frame = ttk.LabelFrame(additional_boxes_frame, text="Late", padding=(10, 5))
+        late_label_frame.grid(row=0, column=1, sticky='nsew', padx=(10, 0), pady=5)
+        late_label_frame.grid(rowspan=5)  # Reduced pady, changed row to 1 to stack boxes vertically
+
+        late_scroll = ttk.Scrollbar(late_label_frame)
+        late_scroll.pack(side='right', fill='y')
+
+        # Increase the height of the "Late" Listbox
+        late_listbox = tk.Listbox(late_label_frame, yscrollcommand=late_scroll.set,
+                                  height=10)  # Adjust height as necessary
+        late_listbox.pack(side='left', fill='both', expand=True)
+        late_scroll.config(command=late_listbox.yview)
+
+        # Center the counters_frame horizontally in info_frame
+        counters_frame.place(relx=0.5, rely=0.35, anchor='center')
+
+        # Adjust the size of the black image for the initial state
+        black_image = np.zeros((480, 640, 3), dtype=np.uint8)
+        black_image_pil = Image.fromarray(black_image)
+        black_image_tk = ImageTk.PhotoImage(image=black_image_pil)
+
+        # Webcam Label
+        webcam_label = tk.Label(webcam_frame, image=black_image_tk)
+        webcam_label.image = black_image_tk
+        webcam_label.pack(expand=True, fill='both')
+
+        # Button Frame
+        button_frame = tk.Frame(recognition_frame)
+        button_frame.grid(row=1, column=0, sticky='ew')
+
+        # Buttons
+        start_button = ttk.Button(button_frame, text="Start Recognize",
+                                  command=lambda: [start_recognition(webcam_label), stop_button.config(state="normal"),
+                                                   start_button.config(state="disabled")], style='TButton')
+        stop_button = ttk.Button(button_frame, text="Stop Recognize",
+                                 command=lambda: [stop_recognition(webcam_label), start_button.config(state="normal"),
+                                                  stop_button.config(state="disabled")], style='TButton')
+        back_button = ttk.Button(button_frame, text="Back", command=recognition_frame.destroy, style='Danger.TButton')
+
+        # Arrange buttons horizontally with padding
+        start_button.pack(side='left', fill='x', expand=True, padx=10, pady=10)
+        stop_button.pack(side='left', fill='x', expand=True, padx=5, pady=5)
+        back_button.pack(side='left', fill='x', expand=True, padx=5, pady=5)
+
+    def inference1():
+        open_recognition_frame()
+
+    def update_gui_with_frame(img, webcam_label):
+        cv_image = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        pil_image = Image.fromarray(cv_image)
+        tk_image = ImageTk.PhotoImage(image=pil_image)
+        webcam_label.imgtk = tk_image  # Anchor imgtk to prevent garbage collection
+        webcam_label.configure(image=tk_image)
+
+    def set_black_screen(webcam_label):
+        black_image = Image.new('RGB', (640, 480), (0, 0, 0))
+        black_photo = ImageTk.PhotoImage(black_image)
+        webcam_label.imgtk = black_photo  # Anchor imgtk to prevent garbage collection
+        webcam_label.configure(image=black_photo)
+        webcam_label.image = black_photo
+
+    def get_next_sequence_number(file_path):
+        try:
+            with open(file_path, 'r', newline='') as file:
+                # Read the last row and return the next sequence number
+                last_row = None
+                for last_row in csv.reader(file): pass
+                if last_row is not None:
+                    return int(last_row[0]) + 1
+                else:
+                    return 1
+        except FileNotFoundError:
+            # If the file does not exist, start from 1
+            return 1
+
+    def save_to_csv(file_path, programme, year_and_sem, tutorial_group, name_of_student, student_id_person):
+        sequence_number = get_next_sequence_number(file_path)
+        with open(file_path, 'a', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(
+                [sequence_number, programme, year_and_sem, tutorial_group, name_of_student, student_id_person])
+
+    def handle_take_image(programme, year_and_sem, tutorial_group, name_of_student, student_id_person, webcam_label,
+                          error_label):
+        # Check if all fields are filled in
+        if not (programme and year_and_sem and tutorial_group and name_of_student and student_id_person):
+            error_label.config(text="Please fill in all fields before capturing images.")
+            return  # Exit the function if any field is empty
+
+        def start_capture():
+            # Proceed with capturing the images
+            takeImages(lambda img: update_gui_with_frame(img, webcam_label), programme, year_and_sem, tutorial_group,
+                       name_of_student, student_id_person)
+            set_black_screen(webcam_label)  # Set the webcam view to black after capturing
+
+            file_path = 'student_database_test.csv'
+            # Save to CSV
+            save_to_csv(file_path, name_of_student, student_id_person, programme, tutorial_group, year_and_sem)
+
+        # Clear any previous error messages
+        error_label.config(text="")
+
+        # Run the capture in a separate thread to prevent GUI freezing
+        threading.Thread(target=start_capture, daemon=True).start()
+
+    def open_registration_screen():
+        root.withdraw()  # Hide the main window
+        registration_window = tk.Toplevel(root)
+        registration_window.title("Registration")
+
+        main_window_width = 1100  # Adjusted width to accommodate webcam and form side-by-side
+        main_window_height = 550
+        center_window(registration_window, main_window_width, main_window_height)
+
+        registration_window.resizable(False, False)
+
+        # Grid configuration for layout
+        registration_window.grid_rowconfigure(0, weight=1)
+        registration_window.grid_columnconfigure([0, 1], weight=1)
+
+        # Webcam label at the top left
+        webcam_frame = tk.Frame(registration_window)
+        webcam_frame.grid(row=0, column=0, sticky="nsew", padx=(20, 10))  # Reduced right padding
+
+        webcam_label = tk.Label(webcam_frame)
+        webcam_label.pack(fill='both', expand=True)
+
+        black_image = Image.new('RGB', (640, 480), (0, 0, 0))
+        black_photo = ImageTk.PhotoImage(black_image)
+        webcam_label.configure(image=black_photo)
+        webcam_label.image = black_photo
+
+        # Form frame
+        form_frame = tk.Frame(registration_window)
+        form_frame.grid(row=0, column=1, sticky="nsew", padx=20)
+
+        # Styling for labels and comboboxes
+        label_style = {'font': ('Segoe UI', 10,'bold'), 'background': '#f0f0f0'}
+        combobox_style = {'font': ('Segoe UI', 10)}
+
+        # Function to create a label and entry/combobox pair
+        def create_form_entry(row, text, widget_type, values=None):
+            label = tk.Label(form_frame, text=text + " :", **label_style)
+            label.grid(row=row, column=0, sticky="e", padx=10, pady=5)
+
+            if widget_type == 'entry':
+                widget = ttk.Entry(form_frame, **combobox_style)
+            elif widget_type == 'combobox':
+                widget = ttk.Combobox(form_frame, values=values, **combobox_style, state="readonly")
+            else:
+                raise ValueError("Unsupported widget type")
+
+            widget.grid(row=row, column=1, sticky="ew", padx=10, pady=5)
+            return widget
+
+        # Creating form fields
+        name_entry = create_form_entry(0, "Name", 'entry')
+        student_id_entry = create_form_entry(1, "Student ID", 'entry')
+        programme_combobox = create_form_entry(2, "Programme", 'combobox', values=["RDS", "REI", "RWS", "RSD"])
+        tutorial_group_combobox = create_form_entry(3, "Tutorial Group", 'combobox',
+                                                    values=["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
+        year_sem_combobox = create_form_entry(4, "Year and Semester", 'combobox',
+                                              values=["Year 1 Sem 1", "Year 1 Sem 2", "Year 1 Sem 3", "Year 2 Sem 1",
+                                                      "Year 2 Sem 2", "Year 2 Sem 3", "Year 3 Sem 1", "Year 3 Sem 2",
+                                                      "Year 3 Sem 3"])
+
+        # Error label
+        error_label = tk.Label(form_frame, text="", fg="red", **label_style)
+        error_label.grid(row=5, column=0, columnspan=2, sticky="ew", padx=10, pady=(5, 0))
+
+        # Configuring the style for Treeview
         style = ttk.Style()
-        style.theme_use('clam')  # Use the clam theme which allows more customization
+        style.configure("Treeview.Heading", font=('Segoe UI', 10, 'bold'))
+        style.configure("Treeview", font=('Segoe UI', 10), rowheight=25)
 
-        # Increase the row height by configuring the font size and rowheight
-        tree_font = ('Segoe UI', 12)  # Use a larger font size to increase row height
-        style.configure('Treeview', font=tree_font, rowheight=21)  # Adjust the rowheight as needed
+        # Treeview Frame
+        tree_frame = tk.Frame(form_frame)
+        tree_frame.grid(row=6, column=0, columnspan=2, sticky="nsew", padx=(10, 0), pady=(5, 10))
 
-        # Configure the Treeview Heading (Column Names)
-        style.configure('Treeview.Heading', font=('Segoe UI', 12), background='#D3D3D3')
+        # Assuming the total width of the treeview is 320 pixels
+        total_width = 320  # Adjust this to the actual width of your treeview
+        column_width = total_width // 2
 
-        # Configure the Treeview field (the cell)
-        style.configure('Treeview', background='white', foreground='black', fieldbackground='white')
+        # Create the Treeview widget with a specified height and evenly split column widths
+        tree = ttk.Treeview(tree_frame, columns=("one", "two"), show='headings', style="Treeview", height=5)
+        tree.column("one", anchor=tk.W, width=column_width)
+        tree.column("two", anchor=tk.W, width=column_width)
 
-        # Configure the color of the lines separating the rows and columns
-        style.layout('Treeview', [('Treeview.field', {'sticky': 'nswe'})])  # Necessary for some versions of Tkinter
-        style.configure('Treeview', bordercolor='grey')  # Set the color for the border
+        tree.heading("one", text="Key", anchor=tk.W)
+        tree.heading("two", text="Value", anchor=tk.W)
 
-        # Create the Treeview widget with the modified style
-        table = ttk.Treeview(table_frame, columns=("Key", "Value"), selectmode="none", show="headings",
-                             style='Treeview')
+        # Inserting empty rows into the treeview
+        keys = ["Name", "Student ID", "Programme", "Tutorial Group", "Year and Semester"]
+        for key in keys:
+            tree.insert("", tk.END, values=(key, ""))
 
-        table.heading("Key", text="Key")
-        table.heading("Value", text="Value")
-        table.column("Key", width=150)
-        table.column("Value", width=150)
-        table.pack(fill="both", expand=True)
+        tree.grid(row=0, column=0, sticky='nsew', padx=(10, 0))
 
-        # Function to update the table with user-entered values
-        def update_table():
-            # Clear the existing table
-            for item in table.get_children():
-                table.delete(item)
+        # Add a scrollbar to the treeview
+        scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
+        scrollbar.grid(row=0, column=1, sticky='ns', padx=(0, 10))
 
-            # Get the user-entered values
-            user_name = name_entry.get()
-            user_student_id = student_id_entry.get()
-            user_programme = programme_combobox.get()
-            user_tutorial_group = tutorial_group_combobox.get()
-            user_year_sem = year_sem_combobox.get()
+        tree.configure(yscrollcommand=scrollbar.set)
 
-            # Create a dictionary to store the key-value pairs
-            user_info = {
-                "Name": user_name,
-                "Student ID": user_student_id,
-                "Programme": user_programme,
-                "Tutorial Group": user_tutorial_group,
-                "Year and Semester": user_year_sem
-            }
+        def update_tree():
+            # Clear the current tree
+            for item in tree.get_children():
+                tree.delete(item)
 
-            # Insert user-entered key-value pairs into the table
-            for key, value in user_info.items():
-                table.insert("", "end", values=(key, value))
+            # Insert new data
+            data = [
+                ("Name", name_entry.get()),
+                ("Student ID", student_id_entry.get()),
+                ("Programme", programme_combobox.get()),
+                ("Tutorial Group", tutorial_group_combobox.get()),
+                ("Year and Semester", year_sem_combobox.get()),
+            ]
+            for key, value in data:
+                tree.insert("", tk.END, values=(key, value))
 
-        def all_fields_filled():
-            # Check if each entry and combobox is filled
-            if (name_entry.get() and student_id_entry.get() and
-                    programme_combobox.get() and tutorial_group_combobox.get() and
-                    year_sem_combobox.get()):
-                return True
-            else:
-                return False
+        # Frame for buttons below the webcam
+        button_frame = tk.Frame(registration_window)
+        # Adjust the row index for the button frame if necessary, it should be right below the form_frame
+        button_frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=10)
+        button_frame.grid_columnconfigure(0, weight=1)
+        button_frame.grid_columnconfigure(1, weight=1)
+        button_frame.grid_columnconfigure(2, weight=1)
+        button_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))  # Reduce the top padding
 
-        def take_image():
-            if all_fields_filled():
-                update_table()  # Update the table with the user's information
-                take_imgs1(
-                    name_entry, student_id_entry, programme_combobox, tutorial_group_combobox,
-                    year_sem_combobox, error_label, video_label
-                )
-            else:
-                error_label.config(text="Please fill all fields before taking a picture.")
+        style = ttk.Style()
+        style.configure('TButton', font=('Segoe UI', 12, 'bold'), borderwidth=1, relief='flat', padding=6,
+                        background='#3498db', foreground='black')
+        style.map('TButton',
+                  foreground=[('pressed', 'black'), ('active', 'black')],
+                  background=[('pressed', '!disabled', '#2E86C1'), ('active', '#5499C7')])
 
-        take_image_button = tk.Button(
+        # Update the Danger.TButton style to have red text in all states
+        style.configure('Danger.TButton', font=('Segoe UI', 12, 'bold'), borderwidth=1, relief='flat', padding=6,
+                        background=DANGER_COLOR, foreground='red')  # Foreground set to red
+        style.map('Danger.TButton',
+                  foreground=[('pressed', 'red'), ('active', 'red'), ('!active', 'red')],
+                  background=[('pressed', '!disabled', DANGER_COLOR), ('active', DANGER_COLOR)])
+
+        # Take Image Button
+        take_image_button = ttk.Button(
             button_frame,
-            text="TAKE IMAGE",
-            command=take_image,  # Use the new function here
-            bg='#3498db',
-            fg='white',
-            height=4
+            text="Take Image",
+            command=lambda: handle_take_image(
+                programme_combobox.get(),
+                year_sem_combobox.get(),
+                tutorial_group_combobox.get(),
+                name_entry.get(),
+                student_id_entry.get(),
+                webcam_label,
+                error_label  # Pass the error_label to the function
+            ),
+            style='TButton'
         )
-        take_image_button.grid(row=0, column=0, sticky="ew", padx=2, pady=6)
+        take_image_button.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
 
-        # Calculate the button width and height based on pixels instead of text units
-        normalize_button = tk.Button(
+        take_image_button.config(command=lambda: [handle_take_image(
+            programme_combobox.get(),
+            year_sem_combobox.get(),
+            tutorial_group_combobox.get(),
+            name_entry.get(),
+            student_id_entry.get(),
+            webcam_label,
+            error_label
+        ), update_tree()])
+
+        normalize_button = ttk.Button(
             button_frame,
             text="TRAIN IMAGE",
             command=norm_img1,
-            bg='#3498db',
-            fg='white',
-            height=4  # Set a fixed height for the buttons
+            style='TButton'
         )
-        normalize_button.grid(row=0, column=1, sticky="ew", padx=2, pady=20)
+        normalize_button.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
 
-        back_button = tk.Button(
+        # Back button to go back to the main screen
+        back_button = ttk.Button(
             button_frame,
-            text="BACK",
+            text="Back",
             command=lambda: [registration_window.destroy(), root.deiconify()],
-            bg='#3498db',
-            fg='white',
-            height=4
+            style='Danger.TButton'
         )
-        back_button.grid(row=0, column=2, sticky="ew", padx=2, pady=6)
-
-        registration_window.update_idletasks()  # Update the layout to get the correct sizes
-        button_frame.update_idletasks()
-        registration_window.mainloop()
+        back_button.grid(row=0, column=2, sticky="ew", padx=5, pady=5)
 
     def check_student_information():
         root.withdraw()  # Hide the main window
