@@ -9,7 +9,7 @@ def takeImages(callback, programme, year_and_sem, tutorial_group, name_of_studen
     number_of_images = 100
 
     # Create the folder structure
-    student_folder = os.path.join(path_to_save, f"{programme}_{year_and_sem}_{tutorial_group}_{name_of_student}_{student_id_person}")
+    student_folder = os.path.join(path_to_save, f"{name_of_student}_{student_id_person}_{programme}_{tutorial_group}_{year_and_sem}")
     os.makedirs(student_folder, exist_ok=True)
     path_to_save = student_folder
 
